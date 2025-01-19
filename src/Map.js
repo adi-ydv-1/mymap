@@ -8,151 +8,246 @@ import OSM from 'ol/source/OSM';
 import Draw from 'ol/interaction/Draw';
 import { LineString, Polygon } from 'ol/geom';
 import 'ol/ol.css';
+import { transform } from 'ol/proj';
+import { getDistance } from 'ol/sphere';
 import './MapComponent.css';
 
 const MapComponent = () => {
-  const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const [drawing, setDrawing] = useState(false);
-  const [drawType, setDrawType] = useState(null);
-  const [waypoints, setWaypoints] = useState([]);
-  const [showMissionModal, setShowMissionModal] = useState(false);
-  const [showPolygonModal, setShowPolygonModal] = useState(false);
+const mapRef = useRef(null);
+const mapInstanceRef = useRef(null);
+const [drawing, setDrawing] = useState(false);
+const [drawType, setDrawType] = useState(null);
+const [waypoints, setWaypoints] = useState([]);
+const [showMissionModal, setShowMissionModal] = useState(false);
+const [showPolygonModal, setShowPolygonModal] = useState(false);
+const [distances, setDistances] = useState([]);
+const [initialModal, setInitialModal] = useState(false);
 
-  useEffect(() => {
-    if (!mapRef.current) return;
-
-    const vectorSource = new VectorSource();
-    const vectorLayer = new VectorLayer({
-      source: vectorSource
-    });
-
-    const map = new Map({
-      target: mapRef.current,
-      layers: [
-        new TileLayer({
-          source: new OSM()
-        }),
-        vectorLayer
-      ],
-      view: new View({
-        center: [0, 0],
-        zoom: 2
-      })
-    });
-
-    mapInstanceRef.current = map;
-
-    // Cleanup function to remove the map when the component unmounts
-    return () => {
-      map.setTarget(null);
-      map.dispose();
-    };
-  }, []);
-
-  const handleDrawOnMap = (type) => {
-    setDrawType(type);
-  };
-
-  const handleStartDrawing = () => {
-    setDrawing(true);
-  };
-
-  const handleStopDrawing = () => {
-    setDrawing(false);
-  };
-
-  useEffect(() => {
-    if (drawing && mapInstanceRef.current) {
-      const draw = new Draw({
-        source: mapInstanceRef.current.getLayers().getArray()[1].getSource(),
-        type: drawType
+    // Add utility function to calculate distances
+    const calculateDistances = (coords) => {
+      return coords.map((coord, index) => {
+          if (index === 0) return 0;
+          const prev = coords[index - 1];
+          const current = coord;
+          // Convert to lon/lat for distance calculation
+          const from = transform(prev, 'EPSG:3857', 'EPSG:4326');
+          const to = transform(current, 'EPSG:3857', 'EPSG:4326');
+          return Math.round(getDistance(from, to));
       });
-      mapInstanceRef.current.addInteraction(draw);
-
-      draw.on('drawend', (e) => {
-        const feature = e.feature;
-        const geometry = feature.getGeometry();
-        const coordinates = geometry.getCoordinates();
-
-        setWaypoints(coordinates);
-
-        if (drawType === 'LineString') {
-          setShowMissionModal(true);
-        } else if (drawType === 'Polygon') {
-          setShowPolygonModal(true);
-        }
-      });
-
-      // Stop drawing when Enter key is pressed
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          handleStopDrawing();
-        }
-      });
-
-      // Cleanup function to remove the draw interaction when drawing is stopped
-      return () => {
-        mapInstanceRef.current.removeInteraction(draw);
-      };
-    }
-  }, [drawing, drawType]);
-
-  const handleModalClose = () => {
-    setShowMissionModal(false);
-    setShowPolygonModal(false);
   };
 
-  return (
-    <div>
-      <div
-        ref={mapRef}
-        style={{
-          width: '100%',
-          height: '500px',
-          border: '1px solid black'
-        }}
-      />
-      <button onClick={() => handleDrawOnMap('LineString')}>Draw Line</button>
-      <button onClick={() => handleDrawOnMap('Polygon')}>Draw Polygon</button>
-      <button onClick={handleStartDrawing}>Start Drawing</button>
-      <button onClick={handleStopDrawing}>Stop Drawing</button>
 
-      {showMissionModal && (
-        <div className="modal">
-          <div className="modal-content">
-            <span className="close" onClick={handleModalClose}>
-              &times;
-            </span>
-            <h2>Mission Modal</h2>
-            <p>Waypoints:</p>
-            <ul>
-              {waypoints.map((waypoint, index) => (
-                <li key={index}>{waypoint.join(', ')}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
 
-      {showPolygonModal && (
-        <div className="modal">
-          <div className="modal-content">
-            <span className="close" onClick={handleModalClose}>
-              &times;
-            </span>
-            <h2>Polygon Modal</h2>
-            <p>Waypoints:</p>
-            <ul>
-              {waypoints.map((waypoint, index) => (
-                <li key={index}>{waypoint.join(', ')}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+useEffect(() => {
+if (!mapRef.current) return;
+
+const vectorSource = new VectorSource();
+const vectorLayer = new VectorLayer({
+source: vectorSource
+});
+
+const map = new Map({
+target: mapRef.current,
+layers: [
+new TileLayer({
+source: new OSM()
+}),
+vectorLayer
+],
+view: new View({
+center: [0, 0],
+zoom: 2
+})
+});
+
+mapInstanceRef.current = map;
+
+// Cleanup function to remove the map when the component unmounts
+return () => {
+map.setTarget(null);
+map.dispose();
+};
+}, []);
+
+const handleDrawOnMap = (type) => {
+setDrawType(type);
 };
 
+const handleStartDrawing = () => {
+  if (!drawType) {
+      alert('Please select a draw type first (Line or Polygon)');
+      return;
+  }
+  setDrawing(true);
+  setInitialModal(true);
+};
+
+const handleStopDrawing = () => {
+setDrawing(false);
+};
+
+useEffect(() => {
+    if (!drawing || !mapInstanceRef.current || !drawType) return;
+
+    try {
+        const draw = new Draw({
+            source: mapInstanceRef.current.getLayers().getArray()[1].getSource(),
+            type: drawType
+        });
+        
+        mapInstanceRef.current.addInteraction(draw);
+
+        const handleDrawEnd = (e) => {
+            const feature = e.feature;
+            const geometry = feature.getGeometry();
+            const coordinates = geometry.getCoordinates();
+
+            if (drawType === 'LineString') {
+                const transformedCoords = coordinates.map(coord => 
+                    transform(coord, 'EPSG:3857', 'EPSG:4326')
+                );
+                
+                const lineDistances = coordinates.map((coord, index) => {
+                    if (index === 0) return 0;
+                    const prev = coordinates[index - 1];
+                    const current = coord;
+                    const from = transform(prev, 'EPSG:3857', 'EPSG:4326');
+                    const to = transform(current, 'EPSG:3857', 'EPSG:4326');
+                    return Math.round(getDistance(from, to));
+                });
+
+                setWaypoints(transformedCoords);
+                setDistances(lineDistances);
+                setShowMissionModal(true);
+            } else if (drawType === 'Polygon') {
+        // Get first ring of polygon coordinates
+        const polygonCoords = coordinates[0];
+        console.log('Polygon coordinates:', polygonCoords);
+
+        // Transform coordinates
+        const transformedCoords = polygonCoords.map(coord => 
+            transform(coord, 'EPSG:3857', 'EPSG:4326')
+        );
+        
+        // Calculate distances
+        const polyDistances = polygonCoords.map((coord, index) => {
+            if (index === 0) return 0;
+            const prev = polygonCoords[index - 1];
+            const current = coord;
+            const from = transform(prev, 'EPSG:3857', 'EPSG:4326');
+            const to = transform(current, 'EPSG:3857', 'EPSG:4326');
+            return Math.round(getDistance(from, to));
+        });
+
+        // Update state
+        setWaypoints([transformedCoords]);
+        setDistances(polyDistances);
+        setShowPolygonModal(true);
+        setInitialModal(false);
+        setDrawing(false);
+        
+        console.log('Polygon modal state:', {
+            waypoints: transformedCoords,
+            distances: polyDistances,
+            showPolygonModal: true
+        });
+    }            
+            setInitialModal(false);
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Enter') {
+                handleStopDrawing();
+            }
+        };
+
+        draw.on('drawend', handleDrawEnd);
+        document.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.removeInteraction(draw);
+            }
+            document.removeEventListener('keydown', handleKeyDown);
+            draw.un('drawend', handleDrawEnd);
+        };
+
+    } catch (error) {
+        console.error('Error initializing draw interaction:', error);
+        setDrawing(false);
+    }
+}, [drawing, drawType]);
+
+const handleModalClose = () => {
+setShowMissionModal(false);
+setShowPolygonModal(false);
+};
+
+return (
+<div>
+<div
+ref={mapRef}
+style={{
+width: '100%',
+height: '500px',
+border: '1px solid black'
+}}
+/>
+<button onClick={() => handleDrawOnMap('LineString')}>Draw Line</button>
+<button onClick={() => handleDrawOnMap('Polygon')}>Draw Polygon</button>
+<button onClick={handleStartDrawing}>Start Drawing</button>
+<button onClick={handleStopDrawing}>Stop Drawing</button>
+
+{initialModal && (
+                <div className="modal">
+                    <div className="modal-content">
+                        <h2>Drawing Instructions</h2>
+                        <p>Click on the map to start drawing waypoints.</p>
+                        <p>Press Enter to complete the drawing.</p>
+                        <button onClick={() => setInitialModal(false)}>Got it</button>
+                    </div>
+                </div>
+            )}
+
+        {/* Mission Modal */}
+        {showMissionModal && (
+            <div className="modal">
+                <div className="modal-content">
+                    <span className="close" onClick={handleModalClose}>&times;</span>
+                    <h2>Mission Waypoints</h2>
+                    <div className="waypoints-list">
+                        {waypoints.map((waypoint, index) => (
+                            <div key={index} className="waypoint-item">
+                                <div>WP({String(index).padStart(2, '0')})</div>
+                                <div>Coordinates({waypoint[0].toFixed(8)}, {waypoint[1].toFixed(8)})</div>
+                                {index > 0 && <div>Distance: {distances[index]}m</div>}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        )}
+        {/* Polygon Modal */}
+        {showPolygonModal && (
+    <div className="modal">
+        <div className="modal-content">
+            <span className="close" onClick={handleModalClose}>&times;</span>
+            <h2>Polygon Coordinates</h2>
+            <div className="waypoints-list">
+                {waypoints[0]?.map((waypoint, index) => (
+                    <div key={index} className="waypoint-item">
+                        <div>WP({String(index).padStart(2, '0')})</div>
+                        <div>Coordinates({waypoint[0].toFixed(8)}, {waypoint[1].toFixed(8)})</div>
+                        {index > 0 && <div>Distance: {distances[index]}m</div>}
+                    </div>
+                ))}
+                {/* Show closing distance */}
+                
+            </div>
+        </div>
+    </div>
+)}
+</div>
+);
+};
 export default MapComponent;
