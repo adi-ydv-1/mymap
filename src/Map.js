@@ -22,21 +22,40 @@ const [showMissionModal, setShowMissionModal] = useState(false);
 const [showPolygonModal, setShowPolygonModal] = useState(false);
 const [distances, setDistances] = useState([]);
 const [initialModal, setInitialModal] = useState(false);
+const [insertPosition, setInsertPosition] = useState(null);
+const [insertType, setInsertType] = useState(null); // 'before' or 'after'
+const [tempPolygon, setTempPolygon] = useState(null);
+const [showDropdown, setShowDropdown] = useState(null);
+
+    // Add dropdown menu component
+    const CoordinateDropdown = ({ index }) => (
+        <div className="coordinate-dropdown">
+            <button onClick={() => setShowDropdown(index)}>⋮</button>
+            {showDropdown === index && (
+                <div className="dropdown-menu">
+                    <button onClick={() => handlePolygonInsert(index, 'before')}>
+                        Insert Polygon Before
+                    </button>
+                    <button onClick={() => handlePolygonInsert(index, 'after')}>
+                        Insert Polygon After
+                    </button>
+                </div>
+            )}
+        </div>
+    );
 
     // Add utility function to calculate distances
     const calculateDistances = (coords) => {
-      return coords.map((coord, index) => {
-          if (index === 0) return 0;
-          const prev = coords[index - 1];
-          const current = coord;
-          // Convert to lon/lat for distance calculation
-          const from = transform(prev, 'EPSG:3857', 'EPSG:4326');
-          const to = transform(current, 'EPSG:3857', 'EPSG:4326');
-          return Math.round(getDistance(from, to));
-      });
-  };
-
-
+        return coords.map((coord, index) => {
+            if (index === 0) return 0;
+            const prev = coords[index - 1];
+            const current = coord;
+            // Convert to lon/lat for distance calculation
+            const from = transform(prev, 'EPSG:3857', 'EPSG:4326');
+            const to = transform(current, 'EPSG:3857', 'EPSG:4326');
+            return Math.round(getDistance(from, to));
+        });
+    };
 
 useEffect(() => {
 if (!mapRef.current) return;
@@ -86,6 +105,16 @@ const handleStopDrawing = () => {
 setDrawing(false);
 };
 
+    // Handle polygon insertion
+    const handlePolygonInsert = (index, type) => {
+        setInsertPosition(index);
+        setInsertType(type);
+        setDrawType('Polygon');
+        setDrawing(true);
+        setShowDropdown(null);
+        setShowMissionModal(false); // Hide mission modal while drawing
+    };
+
 useEffect(() => {
     if (!drawing || !mapInstanceRef.current || !drawType) return;
 
@@ -107,81 +136,75 @@ useEffect(() => {
                     transform(coord, 'EPSG:3857', 'EPSG:4326')
                 );
                 
-                const lineDistances = coordinates.map((coord, index) => {
-                    if (index === 0) return 0;
-                    const prev = coordinates[index - 1];
-                    const current = coord;
-                    const from = transform(prev, 'EPSG:3857', 'EPSG:4326');
-                    const to = transform(current, 'EPSG:3857', 'EPSG:4326');
-                    return Math.round(getDistance(from, to));
-                });
-
                 setWaypoints(transformedCoords);
-                setDistances(lineDistances);
+                setDistances(calculateDistances(coordinates));
                 setShowMissionModal(true);
+                console.log('Setting mission modal to true');
             } else if (drawType === 'Polygon') {
-        // Get first ring of polygon coordinates
-        const polygonCoords = coordinates[0];
-        console.log('Polygon coordinates:', polygonCoords);
+                const polygonCoords = coordinates[0] || [];
+                const transformedCoords = polygonCoords.map(coord => {
+                    if (!coord || coord.length < 2) return null;
+                    const transformed = transform(coord, 'EPSG:3857', 'EPSG:4326');
+                    return transformed;
+                }).filter(coord => coord !== null);
 
-        // Transform coordinates
-        const transformedCoords = polygonCoords.map(coord => 
-            transform(coord, 'EPSG:3857', 'EPSG:4326')
-        );
-        
-        // Calculate distances
-        const polyDistances = polygonCoords.map((coord, index) => {
-            if (index === 0) return 0;
-            const prev = polygonCoords[index - 1];
-            const current = coord;
-            const from = transform(prev, 'EPSG:3857', 'EPSG:4326');
-            const to = transform(current, 'EPSG:3857', 'EPSG:4326');
-            return Math.round(getDistance(from, to));
-        });
-
-        // Update state
-        setWaypoints([transformedCoords]);
-        setDistances(polyDistances);
-        setShowPolygonModal(true);
-        setInitialModal(false);
-        setDrawing(false);
-        
-        console.log('Polygon modal state:', {
-            waypoints: transformedCoords,
-            distances: polyDistances,
-            showPolygonModal: true
-        });
-    }            
+                if (insertPosition !== null) {
+                    setTempPolygon({
+                        coordinates: transformedCoords,
+                        position: insertPosition,
+                        type: insertType
+                    });
+                    setWaypoints([transformedCoords]); // Store as array of arrays
+                    setShowPolygonModal(true);
+                }
+            }
+            setDrawing(false);
             setInitialModal(false);
         };
 
+        draw.on('drawend', handleDrawEnd);
+        
         const handleKeyDown = (e) => {
             if (e.key === 'Enter') {
-                handleStopDrawing();
+                mapInstanceRef.current.removeInteraction(draw);
+                setDrawing(false);
             }
         };
 
-        draw.on('drawend', handleDrawEnd);
         document.addEventListener('keydown', handleKeyDown);
 
         return () => {
-            if (mapInstanceRef.current) {
-                mapInstanceRef.current.removeInteraction(draw);
-            }
+            mapInstanceRef.current.removeInteraction(draw);
             document.removeEventListener('keydown', handleKeyDown);
             draw.un('drawend', handleDrawEnd);
         };
 
     } catch (error) {
-        console.error('Error initializing draw interaction:', error);
+        console.error('Draw interaction error:', error);
         setDrawing(false);
     }
-}, [drawing, drawType]);
+}, [drawing, drawType, insertPosition, insertType]);
 
 const handleModalClose = () => {
 setShowMissionModal(false);
 setShowPolygonModal(false);
 };
+
+    // Import polygon points
+    const handleImportPolygon = () => {
+        if (!tempPolygon) return;
+
+        const newWaypoints = [...waypoints];
+        const insertIndex = tempPolygon.type === 'after' ? 
+            tempPolygon.position + 1 : tempPolygon.position;
+
+        // Insert polygon coordinates and connect with linestring
+        newWaypoints.splice(insertIndex, 0, ...tempPolygon.coordinates);
+        
+        setWaypoints(newWaypoints);
+        setDistances(calculateDistances(newWaypoints));
+        setTempPolygon(null);
+    };
 
 return (
 <div>
@@ -199,50 +222,84 @@ border: '1px solid black'
 <button onClick={handleStopDrawing}>Stop Drawing</button>
 
 {initialModal && (
-                <div className="modal">
-                    <div className="modal-content">
-                        <h2>Drawing Instructions</h2>
-                        <p>Click on the map to start drawing waypoints.</p>
-                        <p>Press Enter to complete the drawing.</p>
-                        <button onClick={() => setInitialModal(false)}>Got it</button>
-                    </div>
-                </div>
-            )}
+    <div className="modal">
+        <div className="modal-content">
+            <h2>Drawing Instructions</h2>
+            <p>Click on the map to start drawing waypoints.</p>
+            <p>Press Enter to complete the drawing.</p>
+            <button onClick={() => setInitialModal(false)}>Got it</button>
+        </div>
+    </div>
+)}
 
-        {/* Mission Modal */}
-        {showMissionModal && (
-            <div className="modal">
-                <div className="modal-content">
-                    <span className="close" onClick={handleModalClose}>&times;</span>
-                    <h2>Mission Waypoints</h2>
-                    <div className="waypoints-list">
-                        {waypoints.map((waypoint, index) => (
-                            <div key={index} className="waypoint-item">
-                                <div>WP({String(index).padStart(2, '0')})</div>
-                                <div>Coordinates({waypoint[0].toFixed(8)}, {waypoint[1].toFixed(8)})</div>
-                                {index > 0 && <div>Distance: {distances[index]}m</div>}
+{/* Mission Modal */}
+{showMissionModal && (
+    <div className="modal">
+        <div className="modal-content">
+            <span className="close" onClick={handleModalClose}>&times;</span>
+            <h2>Mission Waypoints</h2>
+            <div className="scrollable-container">
+                <div className="waypoints-list">
+                    {waypoints.map((waypoint, index) => (
+                        <div key={index} className="waypoint-item">
+                            <div>WP({String(index).padStart(2, '0')})</div>
+                            <div className="coordinate-with-dropdown">
+                                <span>
+                                    Coordinates({waypoint[0].toFixed(8)}, {waypoint[1].toFixed(8)})
+                                </span>
+                                <div className="coordinate-dropdown">
+                                    <button onClick={() => setShowDropdown(index)}>⋮</button>
+                                    {showDropdown === index && (
+                                        <div className="dropdown-menu">
+                                            <button onClick={() => handlePolygonInsert(index, 'before')}>
+                                                Insert Polygon Before
+                                            </button>
+                                            <button onClick={() => handlePolygonInsert(index, 'after')}>
+                                                Insert Polygon After
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                        ))}
-                    </div>
+                            {index > 0 && <div>Distance: {distances[index]}m</div>}
+                        </div>
+                    ))}
                 </div>
             </div>
-        )}
-        {/* Polygon Modal */}
-        {showPolygonModal && (
+        </div>
+    </div>
+)}
+
+{/* Polygon Modal */}
+{showPolygonModal && waypoints && waypoints[0] && (
     <div className="modal">
         <div className="modal-content">
             <span className="close" onClick={handleModalClose}>&times;</span>
             <h2>Polygon Coordinates</h2>
-            <div className="waypoints-list">
-                {waypoints[0]?.map((waypoint, index) => (
-                    <div key={index} className="waypoint-item">
-                        <div>WP({String(index).padStart(2, '0')})</div>
-                        <div>Coordinates({waypoint[0].toFixed(8)}, {waypoint[1].toFixed(8)})</div>
-                        {index > 0 && <div>Distance: {distances[index]}m</div>}
-                    </div>
-                ))}
-                {/* Show closing distance */}
-                
+            {tempPolygon && (
+                <button 
+                    onClick={handleImportPolygon}
+                    className="import-button"
+                >
+                    Import Points
+                </button>
+            )}
+            <div className="scrollable-container">
+                <div className="waypoints-list">
+                    {waypoints[0].map((waypoint, index) => (
+                        waypoint && (
+                            <div key={index} className="waypoint-item">
+                                <div>WP({String(index).padStart(2, '0')})</div>
+                                <div>
+                                    Coordinates(
+                                    {waypoint[0]?.toFixed(8) || '0.00000000'}, 
+                                    {waypoint[1]?.toFixed(8) || '0.00000000'})
+                                </div>
+                                {index > 0 && <div>Distance: {distances[index] || 0}m</div>}
+                            </div>
+                        )
+                    ))}
+                </div>
             </div>
         </div>
     </div>
